@@ -1,0 +1,783 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>UEFI 提取器</title>
+    <!-- 第三方库从 CDN 加载 -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pako/2.1.0/pako.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/lzma/2.3.2/lzma.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.7.1/jquery.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/lodash.js/4.17.21/lodash.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/moment.js/2.29.4/moment.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <style>
+        /* 样式与之前一致，为节省篇幅此处省略，实际使用请保留 */
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background: #f0f2f5; padding: 16px; min-height: 100vh; display: flex; flex-direction: column; align-items: center; color: #1c1e21; }
+        .container { max-width: 600px; width: 100%; background: #fff; border-radius: 24px; box-shadow: 0 8px 20px rgba(0,0,0,0.08); padding: 20px 18px 30px; margin: 10px 0; }
+        h1 { font-size: 1.6rem; font-weight: 600; text-align: center; margin-bottom: 12px; letter-spacing: -0.5px; color: #0a2540; }
+        .sub { text-align: center; font-size: 0.9rem; color: #5e6f8d; margin-bottom: 20px; border-bottom: 1px solid #e9ecf0; padding-bottom: 12px; }
+        #drop-zone { border: 2px dashed #b0c4de; border-radius: 20px; padding: 40px 20px; text-align: center; background: #f8faff; transition: background 0.2s, border-color 0.2s; touch-action: manipulation; cursor: pointer; min-height: 180px; display: flex; flex-direction: column; justify-content: center; align-items: center; position: relative; }
+        #drop-zone.dragover { border-color: #3b82f6; background: #eef4ff; }
+        #drop-zone .icon { font-size: 3.2rem; line-height: 1; margin-bottom: 8px; }
+        #drop-zone p { font-size: 1rem; color: #2c3e50; margin: 4px 0; }
+        #drop-zone .hint { font-size: 0.8rem; color: #8a9bb5; margin-top: 6px; background: #eef2f7; padding: 4px 12px; border-radius: 20px; display: inline-block; }
+        #file-input { display: none; }
+        #status { margin-top: 16px; font-size: 0.95rem; color: #1a2a3a; background: #f2f6fc; border-radius: 12px; padding: 10px 14px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-height: 48px; }
+        #status .spinner { display: inline-block; width: 20px; height: 20px; border: 3px solid #d0d9e8; border-top-color: #3b82f6; border-radius: 50%; animation: spin 0.8s linear infinite; flex-shrink: 0; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        #status .msg { flex: 1; word-break: break-word; }
+        .log-header { display: flex; justify-content: space-between; align-items: center; margin-top: 16px; margin-bottom: 4px; cursor: pointer; user-select: none; }
+        .log-header span { font-size: 0.9rem; font-weight: 500; color: #2c3e50; }
+        .log-header .toggle-icon { font-size: 1rem; transition: transform 0.2s; display: inline-block; }
+        .log-header .toggle-icon.collapsed { transform: rotate(-90deg); }
+        .log-header .copy-btn { background: #e9edf2; border: none; border-radius: 6px; padding: 2px 10px; font-size: 0.8rem; color: #1e293b; cursor: pointer; touch-action: manipulation; }
+        .log-header .copy-btn:active { background: #d0d7e2; }
+        #log-container { background: #1e293b; border-radius: 14px; padding: 12px 14px; max-height: 600px; overflow-y: auto; color: #cbd5e1; font-family: "Menlo", "Cascadia Code", "Consolas", monospace; font-size: 0.7rem; line-height: 1.5; white-space: pre-wrap; word-break: break-all; transition: max-height 0.3s ease, padding 0.3s ease, margin 0.3s ease; }
+        #log-container.collapsed { max-height: 0; padding: 0 14px; margin: 0; overflow: hidden; }
+        #log-container .log-entry { border-bottom: 1px solid #2d3a4f; padding: 2px 0; }
+        #log-container .log-entry:last-child { border-bottom: none; }
+        .log-time { color: #8196b3; margin-right: 8px; }
+        .btn { display: block; width: 100%; padding: 16px; border: none; border-radius: 14px; font-size: 1.1rem; font-weight: 600; background: #3b82f6; color: #fff; transition: background 0.2s, transform 0.1s; touch-action: manipulation; cursor: pointer; margin-top: 18px; text-align: center; box-shadow: 0 4px 6px rgba(59,130,246,0.2); }
+        .btn:active { transform: scale(0.97); background: #2563eb; }
+        .btn:disabled { opacity: 0.5; pointer-events: none; background: #94a3b8; box-shadow: none; }
+        .file-info { background: #f1f5f9; border-radius: 12px; padding: 10px 14px; margin: 12px 0 6px; display: flex; justify-content: space-between; font-size: 0.9rem; color: #1e293b; }
+        .file-info .name { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 70%; }
+        .file-info .size { color: #64748b; }
+        #download-btn { margin-top: 12px; }
+        @media (max-width: 480px) { .container { padding: 16px 14px; border-radius: 18px; } h1 { font-size: 1.3rem; } #drop-zone { padding: 28px 12px; min-height: 140px; } #drop-zone .icon { font-size: 2.6rem; } #status { font-size: 0.85rem; padding: 8px 12px; } #log-container { max-height: 300px; font-size: 0.65rem; padding: 8px; } .btn { padding: 14px; font-size: 1rem; } }
+        @media (prefers-color-scheme: dark) { body { background: #0f172a; color: #e2e8f0; } .container { background: #1e293b; } h1 { color: #f1f5f9; } .sub { color: #94a3b8; border-color: #334155; } #drop-zone { background: #1a2332; border-color: #334155; } #drop-zone.dragover { background: #1e2a3a; border-color: #3b82f6; } #drop-zone p { color: #cbd5e1; } #drop-zone .hint { background: #2d3a4f; color: #b0c4de; } #status { background: #1a2332; color: #e2e8f0; } .file-info { background: #1a2332; color: #e2e8f0; } .btn { background: #2563eb; } #log-container { background: #0b111f; color: #94a3b8; } #log-container .log-entry { border-color: #1e293b; } .log-time { color: #64748b; } .log-header span { color: #e2e8f0; } .log-header .copy-btn { background: #334155; color: #e2e8f0; } .log-header .copy-btn:active { background: #1e293b; } }
+    </style>
+</head>
+<body>
+<div class="container">
+    <h1>📦 UEFI 提取器</h1>
+    <div class="sub">BY 因为太懒让ai来改的Mortal1063</div>
+    <div id="drop-zone">
+        <div class="icon">📁</div>
+        <p><strong>点击选择文件</strong></p>
+        <p class="hint">支持任意文件（.bin .elf .img 等）</p>
+        <input type="file" id="file-input" accept="*/*" />
+    </div>
+    <div id="file-info" class="file-info" style="display:none;">
+        <span class="name" id="file-name">文件</span>
+        <span class="size" id="file-size">0 KB</span>
+    </div>
+    <div id="status">
+        <span class="spinner" style="display:none;"></span>
+        <span class="msg">等待文件…</span>
+    </div>
+    <button id="download-btn" class="btn" style="display:none;">📥 下载结果 ZIP</button>
+    <div class="log-header" id="log-toggle">
+        <span>📋 完整日志</span>
+        <div style="display:flex;align-items:center;gap:8px;">
+            <button class="copy-btn" id="copy-log-btn">复制日志</button>
+            <span class="toggle-icon collapsed">▼</span>
+        </div>
+    </div>
+    <div id="log-container" class="collapsed"></div>
+</div>
+
+<script>
+// ================================================================
+// 全局 UI 函数定义（先于类定义）
+// ================================================================
+var logContainer, toggleIcon, downloadBtn, statusMsg, statusSpinner, fileInfo, fileName, fileSize;
+var logCollapsed = true;
+
+window.appendLog = function(text, isError) {
+    // 实际实现将在下方重写
+    console.log(text);
+};
+window.setStatus = function(text, spin) {};
+window.showFileInfo = function(name, size) {};
+window.triggerDownload = function(blob, filename) {};
+
+// ================================================================
+// 核心工具函数（不依赖 UI）
+// ================================================================
+const _ = window._;
+const $ = window.$;
+const moment = window.moment;
+
+const r16 = (d, o) => new DataView(d.buffer, d.byteOffset + o, 2).getUint16(0, true);
+const r24 = (d, o) => d[o] | (d[o+1] << 8) | (d[o+2] << 16);
+const r64 = (d, o) => Number(new DataView(d.buffer, d.byteOffset + o, 8).getBigUint64(0, true));
+const gid = (d, o) => {
+    const b = new Uint8Array(d.buffer, d.byteOffset + o, 16);
+    const h = n => n.toString(16).padStart(2, '0');
+    return `${h(b[3])}${h(b[2])}${h(b[1])}${h(b[0])}-${h(b[5])}${h(b[4])}-${h(b[7])}${h(b[6])}-${h(b[8])}${h(b[9])}-${h(b[10])}${h(b[11])}${h(b[12])}${h(b[13])}${h(b[14])}${h(b[15])}`.toUpperCase();
+};
+const a4 = o => (o + 3) & ~3;
+const a8 = o => (o + 7) & ~7;
+const findA = (d, p) => {
+    const e = new TextEncoder().encode(p);
+    return _.findIndex(_.range(0, d.length - e.length + 1), i => {
+        for (let j = 0; j < e.length; j++) {
+            if (d[i + j] !== e[j]) return false;
+        }
+        return true;
+    });
+};
+const rUni = (d, o, l) => {
+    const b = new Uint8Array(d.buffer, d.byteOffset + o, l);
+    let str = '';
+    for (let i = 0; i < b.length; i += 2) {
+        const code = b[i] | (b[i+1] << 8);
+        if (code === 0) break;
+        str += String.fromCharCode(code);
+    }
+    return str.trim();
+};
+const decomp = (d, o, s, meth) => {
+    const chunk = new Uint8Array(d.buffer, d.byteOffset + o, s);
+    if (meth === 'gzip') {
+        try { return pako.ungzip(chunk, { to: 'uint8array' }); } catch(e) { throw new Error('Gzip解压失败'); }
+    } else if (meth === 'lzma') {
+        return new Promise((resolve, reject) => {
+            try {
+                const dec = new LZMA.LZMA();
+                dec.decompress(chunk, (result, err) => {
+                    if (err) reject(err);
+                    else resolve(new Uint8Array(result));
+                });
+            } catch(e) { reject(e); }
+        });
+    }
+    throw new Error('Unknown compression method');
+};
+const getPaths = d => {
+    const s = new TextDecoder('ascii', { fatal: false }).decode(d);
+    const re = /[a-zA-Z/\\0-9_\-.]+\.dll\b/g;
+    const paths = [];
+    let m;
+    while ((m = re.exec(s)) !== null) {
+        let p = m[0].replace(/\\/g, '/');
+        if (p.includes('ARM/')) p = p.split('ARM/').pop();
+        else if (p.includes('AARCH64/')) p = p.split('AARCH64/').pop();
+        if (p.split('/').length > 1) paths.push(p);
+    }
+    return paths;
+};
+const getBuild = d => {
+    const s = new TextDecoder('ascii', { fatal: false }).decode(d);
+    const m = s.match(/QC_IMAGE_VERSION_STRING=[a-zA-Z/\\0-9_\-.]+/);
+    return m ? m[0].replace('QC_IMAGE_VERSION_STRING=', '') : '';
+};
+
+// ---------- 类定义 ----------
+class Sec { constructor(t, d, n='') { this.type = t; this.data = d; this.name = n; } }
+class EFI { constructor(g, t, s) { this.guid = g; this.type = t; this.sections = s; } }
+
+const G_LZMA1 = 'EE4E5898-3914-4259-9D6E-DC7BD79403CF';
+const G_LZMA2 = 'BD9921EA-ED91-404A-8B2F-B4D724747C8C';
+const G_GZIP  = '1D301FE9-BE79-4353-91C2-D23BC959AE0C';
+const G_APRI  = 'FC510EE7-FFDC-11D4-BD41-0080C73C8881';
+
+// ---------- 核心解析器 ----------
+class UEFIExtractor {
+    constructor(b) {
+        this.binary = b;
+        this.efis = [];
+        this.aprioriGuids = new Set();
+        this.buildId = '';
+        this.verbose = true;
+        this.depth = 0;
+    }
+    log(msg, indent=0) {
+        if (this.verbose) {
+            const prefix = '  '.repeat(this.depth + indent);
+            window.appendLog(prefix + msg);
+        }
+    }
+    async parse() {
+        const off = findA(this.binary, '_FVH');
+        if (off === -1) throw new Error('_FVH marker not found');
+        const volOff = off - 0x28;
+        this.log(`[LOG] 外层 _FVH 于 0x${off.toString(16).padStart(8,'0')}, 卷偏移 0x${volOff.toString(16).padStart(8,'0')}`);
+        this.efis = await this.handleVolumeImage(this.binary, volOff);
+        this.buildId = getBuild(this.binary);
+        return this;
+    }
+    async handleVolumeImage(data, offset) {
+        this.depth++;
+        this.log(`🔽 进入 Volume @0x${offset.toString(16).padStart(8,'0')} (深度 ${this.depth})`, 0);
+        const magic = new TextDecoder('ascii').decode(data.slice(offset+0x28, offset+0x28+4));
+        if (magic !== '_FVH') {
+            this.log(`⚠️ 无效的 FVH magic: '${magic}', 跳过`, 0);
+            this.depth--;
+            return [];
+        }
+        if (!this.verifyVolumeChecksum(data, offset)) {
+            this.log(`❌ 卷校验和失败`, 0);
+            this.depth--;
+            return [];
+        }
+        const volumeHeaderSize = r16(data, offset + 0x30);
+        const fileOffset = offset + volumeHeaderSize;
+        const volumeData = data.slice(fileOffset);
+        this.log(`   volume_header_size=${volumeHeaderSize}, file_offset=0x${fileOffset.toString(16)}, volume_data length=${volumeData.length}`, 0);
+        const efis = await this.handleFileLoop(volumeData, 0);
+        this.log(`🔼 Volume 解析完成，生成 ${efis.length} 个 EFI 对象`, 0);
+        this.depth--;
+        return efis;
+    }
+    verifyVolumeChecksum(data, offset) {
+        const headerSize = r16(data, offset + 0x30);
+        const header = new Uint8Array(data.buffer, data.byteOffset + offset, headerSize);
+        const orig = header.slice(0x32, 0x34);
+        header[0x32] = 0; header[0x33] = 0;
+        const calc = this.checksum16(header, 0, headerSize);
+        header[0x32] = orig[0]; header[0x33] = orig[1];
+        return calc === r16(data, offset + 0x32);
+    }
+    checksum16(data, off, size) {
+        let sum = 0;
+        const dv = new DataView(data.buffer, data.byteOffset + off, size);
+        for (let i = 0; i < size - 1; i += 2) sum += dv.getUint16(i, true);
+        return (0x10000 - (sum & 0xFFFF)) & 0xFFFF;
+    }
+    async handleFileLoop(data, offset) {
+        this.log(`   handle_file_loop: data length=${data.length}, start offset=${offset}`, 1);
+        const efis = [];
+        let fileCount = 0;
+        while (offset < data.length) {
+            if (offset + 0x18 > data.length) {
+                this.log(`   ⚠️ 循环结束: 剩余数据不足 0x18 字节，当前 offset=${offset}, data length=${data.length}`, 1);
+                break;
+            }
+            const { fileType, fileSize, fileHeaderSize, fileGuid } = this.readFileMetadata(data, offset);
+            if ((fileType === 0xFF || fileType === 0x00) && fileSize === 0xFFFFFF) {
+                this.log(`   📌 遇到卷结束标记 (type=0x${fileType.toString(16)}, size=0xFFFFFF)，终止循环`, 1);
+                break;
+            }
+            if (fileSize === 0 || offset + fileSize > data.length) {
+                this.log(`   ⚠️ 文件大小异常: file_size=${fileSize}, offset=${offset}, 剩余=${data.length-offset}`, 1);
+                break;
+            }
+            fileCount++;
+            this.log(`  📄 文件 #${fileCount}: type=0x${fileType.toString(16).padStart(2,'0')}, GUID=${fileGuid}, size=${fileSize}, off=0x${offset.toString(16).padStart(8,'0')}`, 1);
+            const rawData = data.slice(offset + fileHeaderSize, offset + fileSize);
+            this.log(`    rawData length: ${rawData.length}`, 2);
+            const sections = await this.handleSectionLoop(rawData, 0);
+            const secTypes = _.map(sections, 'type').join(', ');
+            this.log(`    📊 该文件包含 ${sections.length} 个节: ${secTypes}`, 2);
+            if (fileType === 0x01) {
+                const section = new Sec('RAW', rawData, fileGuid);
+                efis.push(new EFI(fileGuid, 'RAW', [section]));
+            } else if (fileType === 0x02) {
+                if (fileGuid === G_APRI) {
+                    if (sections.length && sections[0].type === 'RAW') {
+                        const raw = sections[0].data;
+                        for (let i = 0; i < raw.length; i += 16) {
+                            if (i + 16 <= raw.length) {
+                                const guid = gid(raw, i);
+                                this.aprioriGuids.add(guid);
+                                this.log(`    📌 APRIORI GUID: ${guid}`, 2);
+                            }
+                        }
+                    }
+                } else {
+                    const fvSections = _.filter(sections, s => s.type === 'FV');
+                    if (fvSections.length) {
+                        this.log(`    🔁 发现 ${fvSections.length} 个 FV 节 (文件类型0x02)，递归解析...`, 1);
+                        for (const fvSec of fvSections) {
+                            const nested = await this.handleVolumeImage(fvSec.data, 0);
+                            efis.push(...nested);
+                        }
+                        const remaining = _.filter(sections, s => s.type !== 'FV');
+                        if (remaining.length) efis.push(new EFI(fileGuid, 'FREEFORM', remaining));
+                    } else {
+                        efis.push(new EFI(fileGuid, 'FREEFORM', sections));
+                    }
+                }
+            } else if (_.includes([0x03, 0x05, 0x07, 0x09], fileType)) {
+                const typeNames = {0x03:'SECURITY_CORE', 0x05:'DXE_CORE', 0x07:'DRIVER', 0x09:'APPLICATION'};
+                const fvSections = _.filter(sections, s => s.type === 'FV');
+                if (fvSections.length) {
+                    this.log(`    🔁 发现 ${fvSections.length} 个 FV 节 (文件类型0x${fileType.toString(16)})，递归解析...`, 1);
+                    for (const fvSec of fvSections) {
+                        const nested = await this.handleVolumeImage(fvSec.data, 0);
+                        efis.push(...nested);
+                    }
+                    const remaining = _.filter(sections, s => s.type !== 'FV');
+                    if (remaining.length) efis.push(new EFI(fileGuid, typeNames[fileType], remaining));
+                } else {
+                    efis.push(new EFI(fileGuid, typeNames[fileType], sections));
+                }
+            } else if (fileType === 0x0B) {
+                this.log(`    🔁 发现嵌套 FV_IMAGE (类型0x0B)，递归解析...`, 1);
+                const fvSections = _.filter(sections, s => s.type === 'FV');
+                this.log(`    📊 该文件包含 ${fvSections.length} 个 FV 节`, 1);
+                for (const sec of fvSections) {
+                    this.log(`    🧩 处理 FV 节，数据大小 ${sec.data.length}`, 1);
+                    const nested = await this.handleVolumeImage(sec.data, 0);
+                    efis.push(...nested);
+                }
+            } else if (fileType === 0xF0) {
+                this.log(`    ⏭️ 跳过 PAD 文件`, 1);
+            } else if (fileType === 0x00 || fileType === 0xFF) {
+                this.log(`    ⏭️ 跳过填充文件 (type=0x${fileType.toString(16)})，继续`, 1);
+            } else {
+                this.log(`    ⚠️ 未知文件类型 0x${fileType.toString(16)}, 作为 RAW 处理`, 1);
+                const section = new Sec('RAW', rawData, fileGuid);
+                efis.push(new EFI(fileGuid, 'RAW', [section]));
+            }
+            offset += fileSize;
+            offset = a8(offset);
+        }
+        this.log(`   handle_file_loop ended at offset=${offset}, data length=${data.length}`, 1);
+        this.log(`  📊 文件总数: ${fileCount}, 生成 EFI 对象: ${efis.length}`, 1);
+        return efis;
+    }
+    readFileMetadata(data, offset) {
+        const guid = gid(data, offset);
+        const fileType = data[offset + 0x12];
+        const attributes = data[offset + 0x13];
+        let fileSize = r24(data, offset + 0x14);
+        let fileHeaderSize = 0x18;
+        if (attributes === 0x41) {
+            fileSize = r64(data, offset + 0x18);
+            fileHeaderSize = 0x20;
+        }
+        return { fileType, fileSize, fileHeaderSize, fileGuid: guid };
+    }
+    async handleSectionLoop(data, offset) {
+        const sections = [];
+        let loopOffset = offset;
+        while (loopOffset < data.length) {
+            if (loopOffset + 4 > data.length) break;
+            const { sectionSize, sectionType } = this.readSectionMetadata(data, loopOffset);
+            if (sectionSize === 0 || loopOffset + sectionSize > data.length) break;
+            this.log(`      [SECTION] offset=0x${loopOffset.toString(16)}, size=0x${sectionSize.toString(16)}, type=0x${sectionType.toString(16)}`, 3);
+            if (sectionType === 0x02) {
+                const subs = await this.parseGuidDefinedSection(data, loopOffset);
+                sections.push(...subs);
+            } else if (sectionType === 0x10) {
+                const raw = data.slice(loopOffset+4, loopOffset+sectionSize);
+                sections.push(new Sec('PE32', raw));
+            } else if (sectionType === 0x11) {
+                const raw = data.slice(loopOffset+4, loopOffset+sectionSize);
+                sections.push(new Sec('PIC', raw));
+            } else if (sectionType === 0x12) {
+                const raw = data.slice(loopOffset+4, loopOffset+sectionSize);
+                sections.push(new Sec('TE', raw));
+            } else if (sectionType === 0x13) {
+                const raw = data.slice(loopOffset+4, loopOffset+sectionSize);
+                sections.push(new Sec('DXE_DEPEX', raw));
+            } else if (sectionType === 0x15) {
+                const name = rUni(data, loopOffset+4, sectionSize-4);
+                const raw = data.slice(loopOffset+4, loopOffset+sectionSize);
+                sections.push(new Sec('UI', raw, name));
+            } else if (sectionType === 0x17) {
+                const raw = data.slice(loopOffset+4, loopOffset+sectionSize);
+                this.log(`    📦 发现 FV 节，大小 ${raw.length}`, 2);
+                sections.push(new Sec('FV', raw));
+            } else if (sectionType === 0x18 || sectionType === 0x19) {
+                const raw = data.slice(loopOffset+4, loopOffset+sectionSize);
+                sections.push(new Sec('RAW', raw));
+            } else if (sectionType === 0x1B) {
+                const raw = data.slice(loopOffset+4, loopOffset+sectionSize);
+                sections.push(new Sec('PEI_DEPEX', raw));
+            } else if (sectionType === 0x00 || sectionType === 0xFF) {
+                // skip
+            } else {
+                this.log(`    ⚠️ 未知节类型 0x${sectionType.toString(16)}, 作为 RAW 处理`, 2);
+                const raw = data.slice(loopOffset+4, loopOffset+sectionSize);
+                sections.push(new Sec('RAW', raw));
+            }
+            loopOffset += sectionSize;
+            loopOffset = a4(loopOffset);
+        }
+        return sections;
+    }
+    readSectionMetadata(data, offset) {
+        const sectionSize = r24(data, offset);
+        const sectionType = data[offset + 3];
+        return { sectionSize, sectionType };
+    }
+    async parseGuidDefinedSection(data, offset) {
+        const { sectionSize, sectionType } = this.readSectionMetadata(data, offset);
+        if (sectionType !== 0x02) throw new Error('Not a GUID_DEFINED section');
+        const guid = gid(data, offset + 4);
+        const sectionHeaderSize = r16(data, offset + 0x14);
+        const compressedOffset = offset + sectionHeaderSize;
+        const compressedSize = sectionSize - sectionHeaderSize;
+        let decompressedData;
+        if (guid === G_LZMA1 || guid === G_LZMA2) {
+            this.log(`    📦 压缩节 GUID=${guid} (LZMA), 压缩大小=${compressedSize}`, 2);
+            decompressedData = await decomp(data, compressedOffset, compressedSize, 'lzma');
+        } else if (guid === G_GZIP) {
+            this.log(`    📦 压缩节 GUID=${guid} (GZip), 压缩大小=${compressedSize}`, 2);
+            decompressedData = await decomp(data, compressedOffset, compressedSize, 'gzip');
+        } else {
+            throw new Error(`Unsupported compression GUID: ${guid}`);
+        }
+        this.log(`    ✅ 解压完成，解压后大小=${decompressedData.length}`, 2);
+        return this.handleSectionLoop(decompressedData, 0);
+    }
+    // ---------- 提取方法 ----------
+    async extract() {
+        window.appendLog(`\n[EXTRACT] 开始提取，共 ${this.efis.length} 个 EFI 对象`);
+        const files = {};
+        const loadList = [], includeList = [];
+        const guidToInfPath = {};
+
+        _.each(this.efis, (efi, idx) => {
+            const uiSections = _.filter(efi.sections, s => s.type === 'UI');
+            const sectionsWithPath = _.filter(efi.sections, s => this.isSectionWithPath(s));
+            let allPaths = [];
+            _.each(sectionsWithPath, sec => {
+                const paths = getPaths(sec.data);
+                allPaths = _.concat(allPaths, paths);
+            });
+            const hasPath = allPaths.length > 0;
+            const hasUi = uiSections.length > 0;
+
+            let outputSubdir = '', moduleName = '', baseName = '', displayName = '', shouldGenerateInf = false;
+            if (hasPath) {
+                const firstPath = allPaths[0];
+                const parts = firstPath.split('/');
+                if (parts.length >= 3) {
+                    const subParts = _.slice(parts, 0, parts.length - 3);
+                    outputSubdir = subParts.join('/');
+                    moduleName = parts[parts.length - 3];
+                    baseName = (uiSections.length === 1) ? uiSections[0].name : moduleName;
+                    displayName = baseName;
+                    shouldGenerateInf = true;
+                } else {
+                    outputSubdir = firstPath.replace(/\//g, '_');
+                    moduleName = firstPath.replace(/\//g, '_');
+                    baseName = moduleName;
+                    displayName = moduleName;
+                    shouldGenerateInf = true;
+                }
+            } else if (hasUi) {
+                outputSubdir = 'RawFiles';
+                const uiName = uiSections[0].name;
+                moduleName = uiName.replace(/[\\/]/g, '_');
+                baseName = uiName;
+                displayName = uiName;
+                shouldGenerateInf = false;
+            } else {
+                outputSubdir = 'RawFiles';
+                const guidStr = efi.guid.replace(/-/g, '');
+                moduleName = guidStr;
+                baseName = guidStr;
+                displayName = guidStr;
+                shouldGenerateInf = false;
+            }
+
+            window.appendLog(`\n[EXTRACT] 处理 EFI #${idx+1}/${this.efis.length}`);
+            window.appendLog(`  GUID: ${efi.guid}`);
+            window.appendLog(`  类型: ${efi.type}`);
+            window.appendLog(`  节数: ${efi.sections.length}`);
+            _.each(efi.sections, s => {
+                window.appendLog(`    - ${s.type}: ${s.data.length} 字节` + (s.name ? `, 名称: ${s.name}` : ''));
+            });
+            window.appendLog(`  has_path=${hasPath}, has_ui=${hasUi}`);
+            if (hasPath) window.appendLog(`  all_paths: ${JSON.stringify(allPaths)}`);
+            if (hasUi) window.appendLog(`  ui_sections: ${JSON.stringify(_.map(uiSections, 'name'))}`);
+
+            if (shouldGenerateInf) {
+                window.appendLog(`  -> 模块名: ${moduleName}, 基础名: ${baseName}, 输出子目录: ${outputSubdir}`);
+                const nonUI = _.filter(efi.sections, s => s.type !== 'UI');
+                let modType = efi.type.toUpperCase();
+                if (efi.type === 'APPLICATION') modType = 'UEFI_APPLICATION';
+                else if (efi.type === 'DRIVER') modType = 'DXE_DRIVER';
+                else if (efi.type === 'SECURITY_CORE') modType = 'SEC';
+                const hasDepex = _.some(efi.sections, s => s.type === 'DXE_DEPEX');
+
+                const infLines = [
+                    '# ****************************************************************************',
+                    '# AUTOGENERATED BY UEFIReader (Web)',
+                    `# AUTOGENED AS ${displayName}.inf`,
+                    '# DO NOT MODIFY',
+                    `# GENERATED ON: ${moment().toISOString()}`,
+                    '',
+                    '[Defines]',
+                    '  INF_VERSION    = 0x0001001B',
+                    `  BASE_NAME      = ${baseName}`,
+                    `  FILE_GUID      = ${efi.guid}`,
+                    `  MODULE_TYPE    = ${modType}`,
+                    '  VERSION_STRING = 1.0',
+                    hasDepex ? '  ENTRY_POINT    = EfiEntry' : '',
+                    '',
+                    '[Binaries.AARCH64]'
+                ];
+
+                _.each(nonUI, sec => {
+                    let ext = sec.type.toLowerCase();
+                    if (sec.type === 'PE32') ext = 'efi';
+                    else if (sec.type === 'DXE_DEPEX') ext = 'depex';
+                    const outFile = `${moduleName}.${ext}`;
+                    infLines.push(`   ${sec.type}|${outFile}|*`);
+                    const fullPath = `${outputSubdir}/${outFile}`;
+                    files[fullPath] = sec.data;
+                    window.appendLog(`    写入文件: ${fullPath}`);
+                });
+
+                infLines.push('');
+                if (hasDepex) {
+                    infLines.push('[Depex]');
+                    infLines.push('  TRUE');
+                }
+                infLines.push('# AUTOGEN ENDS');
+                infLines.push('# ****************************************************************************');
+
+                const infPath = `${outputSubdir}/${moduleName}.inf`;
+                files[infPath] = new TextEncoder().encode(infLines.join('\n'));
+                window.appendLog(`    写入 INF: ${infPath}`);
+                const relInfPath = infPath.replace(/\\/g, '/');
+                guidToInfPath[efi.guid] = relInfPath;
+                loadList.push(`INF ${relInfPath}`);
+                includeList.push(relInfPath);
+            } else {
+                const nonUI = _.filter(efi.sections, s => s.type !== 'UI');
+                _.each(nonUI, sec => {
+                    let ext = sec.type.toLowerCase();
+                    if (sec.type === 'PE32') ext = 'efi';
+                    else if (sec.type === 'DXE_DEPEX') ext = 'depex';
+                    const fileName = baseName ? baseName.replace(/[\\/]/g, '_') : efi.guid.replace(/-/g, '');
+                    const outFile = `${fileName}.${ext}`;
+                    const fullPath = `${outputSubdir}/${outFile}`;
+                    files[fullPath] = sec.data;
+                    window.appendLog(`    写入文件: ${fullPath}`);
+                });
+            }
+        });
+
+        files['DXE.dsc.inc'] = new TextEncoder().encode(includeList.join('\n'));
+        files['DXE.inc'] = new TextEncoder().encode(loadList.join('\n'));
+        window.appendLog(`[EXTRACT] 生成 DXE.dsc.inc 和 DXE.inc，文件数: ${includeList.length}`);
+
+        const apriLines = ['APRIORI DXE {'];
+        for (const guid of this.aprioriGuids) {
+            if (guidToInfPath[guid]) {
+                const relPath = guidToInfPath[guid];
+                apriLines.push(`    INF ${relPath}`);
+                window.appendLog(`  APRIORI 添加: ${relPath}`);
+            } else {
+                window.appendLog(`  ⚠️ APRIORI GUID ${guid} 未找到对应的 INF`, true);
+            }
+        }
+        apriLines.push('}');
+        files['APRIORI.inc'] = new TextEncoder().encode(apriLines.join('\n'));
+        window.appendLog(`[EXTRACT] APRIORI.inc 生成，包含 ${apriLines.length-2} 个条目`);
+
+        const totalFiles = _.keys(files).length;
+        window.appendLog(`\n[EXTRACT] 总共生成 ${totalFiles} 个文件 (含 INF 和二进制文件)`);
+        window.appendLog(`[SUMMARY] 成功提取 ${includeList.length} 个模块（生成 INF）`);
+        return files;
+    }
+    isSectionWithPath(sec) {
+        return !_.includes(['UI', 'DXE_DEPEX', 'RAW', 'PEI_DEPEX'], sec.type);
+    }
+}
+
+// ================================================================
+// DOM 就绪后初始化 UI 函数和事件绑定
+// ================================================================
+$(function() {
+    // 获取 DOM 元素引用
+    logContainer = $('#log-container');
+    toggleIcon = $('.toggle-icon');
+    downloadBtn = $('#download-btn');
+    statusMsg = $('#status .msg');
+    statusSpinner = $('#status .spinner');
+    fileInfo = $('#file-info');
+    fileName = $('#file-name');
+    fileSize = $('#file-size');
+
+    // 重写全局 UI 函数
+    window.appendLog = function(text, isError) {
+        const time = moment().format('HH:mm:ss');
+        const entry = $(`<div class="log-entry"><span class="log-time">[${time}]</span>${text}</div>`);
+        if (isError) entry.css('color', '#f87171');
+        logContainer.append(entry);
+        logContainer.scrollTop(logContainer[0].scrollHeight);
+    };
+    window.setStatus = function(text, spin) {
+        statusMsg.text(text);
+        statusSpinner.css('display', spin ? 'inline-block' : 'none');
+    };
+    window.showFileInfo = function(name, size) {
+        fileInfo.show();
+        fileName.text(name);
+        fileSize.text(size < 1024 ? `${size} B` : `${(size/1024).toFixed(1)} KB`);
+    };
+    window.triggerDownload = function(blob, filename) {
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        a.style.display = 'none';
+        document.body.appendChild(a);
+        a.click();
+        setTimeout(() => {
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        }, 5000);
+        window.appendLog(`📥 触发下载: ${filename}`);
+    };
+
+    // 日志折叠
+    $('#log-toggle').on('click', function(e) {
+        if ($(e.target).closest('#copy-log-btn').length) return;
+        logCollapsed = !logCollapsed;
+        logContainer.toggleClass('collapsed', logCollapsed);
+        toggleIcon.toggleClass('collapsed', logCollapsed);
+    });
+
+    // 复制日志
+    $('#copy-log-btn').on('click', function(e) {
+        e.stopPropagation();
+        const text = logContainer.text();
+        if (!text) return;
+        try {
+            navigator.clipboard.writeText(text).then(() => {
+                const orig = $(this).text();
+                $(this).text('✅ 已复制');
+                setTimeout(() => $(this).text(orig), 2000);
+            }).catch(() => fallbackCopy(text, this));
+        } catch(e) {
+            fallbackCopy(text, this);
+        }
+    });
+    function fallbackCopy(text, btn) {
+        const range = document.createRange();
+        range.selectNode(logContainer[0]);
+        window.getSelection().removeAllRanges();
+        window.getSelection().addRange(range);
+        document.execCommand('copy');
+        window.getSelection().removeAllRanges();
+        const orig = $(btn).text();
+        $(btn).text('✅ 已复制');
+        setTimeout(() => $(btn).text(orig), 2000);
+    }
+
+    // 处理文件
+    let isProcessing = false;
+    let savedZipBlob = null;
+    let savedZipName = '';
+
+    async function processFile(file) {
+        if (isProcessing) return;
+        isProcessing = true;
+        downloadBtn.hide();
+        savedZipBlob = null;
+        savedZipName = '';
+        logContainer.empty();
+        window.setStatus('读取文件中…', true);
+        window.showFileInfo(file.name, file.size);
+        window.appendLog(`📁 载入: ${file.name} (${(file.size/1024).toFixed(1)} KB)`);
+
+        try {
+            const buffer = await file.arrayBuffer();
+            const binary = new Uint8Array(buffer);
+            window.setStatus('解析 UEFI 结构…', true);
+            window.appendLog('🔍 开始解析...');
+
+            const extractor = new UEFIExtractor(binary);
+            await extractor.parse();
+            window.appendLog(`✅ 解析完成，共 ${extractor.efis.length} 个 EFI 对象`);
+
+            window.setStatus('生成输出文件…', true);
+            window.appendLog('📦 生成 INF 及二进制文件...');
+            const files = await extractor.extract();
+            const moduleCount = files['DXE.dsc.inc'] ? new TextDecoder().decode(files['DXE.dsc.inc']).split('\n').filter(l => l.trim()).length : 0;
+            window.appendLog(`📄 最终生成 ${_.keys(files).length} 个文件，其中 INF 模块数: ${moduleCount}`);
+
+            if (typeof JSZip === 'undefined') {
+                window.appendLog('⏳ 加载 JSZip 库...');
+                await loadScript('https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js');
+            }
+            const zip = new JSZip();
+            // 获取根目录名
+            const folderName = extractor.buildId || 'UEFI_extract';
+            // 将所有文件放入以 folderName 命名的根目录下
+            _.each(files, (content, path) => {
+                zip.file(folderName + '/' + path, content);
+            });
+            window.setStatus('打包 ZIP…', true);
+            window.appendLog('📦 打包中...');
+            const zipBlob = await zip.generateAsync({ type: 'blob' });
+            const downloadName = `${folderName}.zip`;
+
+            savedZipBlob = zipBlob;
+            savedZipName = downloadName;
+
+            window.setStatus('✅ 处理完成，点击下方按钮下载 ZIP');
+            downloadBtn.show();
+            downloadBtn.off('click').on('click', function() {
+                if (savedZipBlob) {
+                    window.triggerDownload(savedZipBlob, savedZipName);
+                } else {
+                    window.appendLog('⚠️ 没有可用的 ZIP 数据，请重新处理文件', true);
+                }
+            });
+        } catch (e) {
+            window.appendLog(`❌ 错误: ${e.message}`, true);
+            window.setStatus('处理失败，查看日志');
+            console.error(e);
+        } finally {
+            isProcessing = false;
+            statusSpinner.hide();
+        }
+    }
+
+    function loadScript(src) {
+        return new Promise((resolve, reject) => {
+            const script = document.createElement('script');
+            script.src = src;
+            script.onload = resolve;
+            script.onerror = reject;
+            document.head.appendChild(script);
+        });
+    }
+
+    // ---------- 事件绑定 ----------
+    $('#drop-zone').on('click', async function() {
+        if (window.showOpenFilePicker) {
+            try {
+                const [handle] = await window.showOpenFilePicker({
+                    types: [{ description: 'All Files', accept: { '*/*': ['.bin', '.elf', '.img'] } }],
+                    multiple: false
+                });
+                const file = await handle.getFile();
+                processFile(file);
+                return;
+            } catch (err) {
+                if (err.name !== 'AbortError' && err.name !== 'SecurityError') {
+                    console.warn('showOpenFilePicker fallback', err);
+                }
+                $('#file-input').click();
+                return;
+            }
+        }
+        $('#file-input').click();
+    });
+    $('#drop-zone').on('dragover', function(e) {
+        e.preventDefault();
+        $(this).addClass('dragover');
+    });
+    $('#drop-zone').on('dragleave', function() {
+        $(this).removeClass('dragover');
+    });
+    $('#drop-zone').on('drop', function(e) {
+        e.preventDefault();
+        $(this).removeClass('dragover');
+        if (e.originalEvent.dataTransfer.files.length) processFile(e.originalEvent.dataTransfer.files[0]);
+    });
+    $('#file-input').on('change', function(e) {
+        if (this.files.length) processFile(this.files[0]);
+        this.value = '';
+    });
+
+    window.setStatus('请点击或拖拽 UEFI 文件');
+    window.appendLog('🟢 就绪，等待文件...');
+});
+</script>
+</body>
+</html>
