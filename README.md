@@ -2,7 +2,7 @@
 
 基于 [MSMTools/UEFIReader](https://github.com/MSMTools/UEFIReader) 设计理念，并借助 AI 辅助编程实现的一个 UEFI 固件解析工具。可以从 UEFI 映像中提取 DXE 驱动、固件卷、自由格式文件等，并自动生成符合 EDK2 规范的 `.inf`、`.dsc.inc` 和 `.inc` 文件，方便集成到其他 UEFI 项目中。
 
-**🌐 网页端在线提取**：无需本地安装，直接上传固件即可解析，请访问 [xxx.com](http://xxx.com)
+**🌐 网页端在线提取**：无需本地安装，直接上传固件即可解析，请访问 [网页版UEFIReader](https://uefireader.gzlmortal.eu.org/)
 
 ## 1. 项目背景
 UEFI 固件通常以体积较大的二进制映像（FV 镜像、XBL 镜像等）形式存在，手动提取其中的驱动模块并构建可编译的工程十分繁琐。UEFIReader 能够自动解析 UEFI 固件卷（Firmware Volume）结构，识别各类文件（RAW、FREEFORM、DXE_CORE、DRIVER、APPLICATION 等），并解压 LZMA / GZip 压缩数据，最终输出：
